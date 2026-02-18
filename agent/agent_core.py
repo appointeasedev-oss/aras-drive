@@ -1,445 +1,157 @@
 #!/usr/bin/env python3
 """
-ARAS - True AI Agent
-Multi-step reasoning, verification, file operations
+ARAS - Advanced AI Agent Core
+Enhanced with ReAct reasoning, modular tools, and self-correction.
+Optimized for small local models like Qwen2.5-Coder.
 """
 
 import os
 import json
 import requests
 import re
+import time
+try:
+    from .tools.base import ShellTool, FileTool
+    from .tools.developer import ToolCreator
+    from .tools.optimizer import OptimizerTool
+    from .memory import add_to_memory, get_memory_context, remember_fact, recall_fact
+except ImportError:
+    from tools.base import ShellTool, FileTool
+    from tools.developer import ToolCreator
+    from tools.optimizer import OptimizerTool
+    from memory import add_to_memory, get_memory_context, remember_fact, recall_fact
 
 # Config
-AGENT_DIR = os.path.dirname(os.path.dirname(__file__))
+AGENT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WORKSPACE = os.path.join(AGENT_DIR, "workspace")
-MEMORY_DIR = os.path.join(AGENT_DIR, "memory")
 OLLAMA_URL = "http://localhost:11434/api/generate"
 
 os.makedirs(WORKSPACE, exist_ok=True)
-os.makedirs(MEMORY_DIR, exist_ok=True)
 
-print(f"[ARAS] Workspace: {WORKSPACE}")
+# Initialize Tools
+shell_tool = ShellTool()
+file_tool = FileTool(WORKSPACE)
+tool_creator = ToolCreator(os.path.join(AGENT_DIR, "agent", "tools"))
+optimizer_tool = OptimizerTool(__file__)
 
+TOOLS = {
+    "shell": shell_tool,
+    "file_op": file_tool,
+    "create_tool": tool_creator,
+    "self_optimize": optimizer_tool
+}
 
-# === MEMORY ===
-class Memory:
-    def __init__(self):
-        self.short = {"messages": [], "current_project": None}
-        self.long = {}
-        self.load()
-    
-    def load(self):
-        try:
-            s = os.path.join(MEMORY_DIR, "short.json")
-            if os.path.exists(s):
-                data = json.load(open(s))
-                self.short = {"messages": data.get("messages", []), "current_project": data.get("current_project")}
-        except: 
-            self.short = {"messages": [], "current_project": None}
-        try:
-            l = os.path.join(MEMORY_DIR, "long.json")
-            if os.path.exists(l):
-                self.long = json.load(open(l))
-        except: 
-            self.long = {}
-    
-    def save(self):
-        json.dump(self.short, open(os.path.join(MEMORY_DIR, "short.json"), "w"))
-        json.dump(self.long, open(os.path.join(MEMORY_DIR, "long.json"), "w"))
-    
-    def add_msg(self, role, text):
-        self.short["messages"].append({"role": role, "text": text})
-        if len(self.short["messages"]) > 20:
-            self.short["messages"] = self.short["messages"][-20:]
-        self.save()
-    
-    def set_project(self, name):
-        self.short["current_project"] = name
-        self.save()
-    
-    def remember(self, key, value):
-        self.long[key] = {"value": value}
-        self.save()
-    
-    def recall(self, key):
-        return self.long.get(key, {}).get("value")
-    
-    def get_context(self):
-        msgs = []
-        for m in self.short.get("messages", []):
-            # Handle both "text" and "content" keys
-            text = m.get("text") or m.get("content") or m.get("message", "")
-            if text:
-                msgs.append({"role": m.get("role", "user"), "text": text})
-        
-        recent = msgs[-10:] if len(msgs) > 10 else msgs
-        return "\n".join([f"{m['role']}: {m['text'][:150]}" for m in recent])
-
-memory = Memory()
-print("[OK] Memory loaded")
-
-
-# === AI CALLS ===
-def ai(prompt, model="qwen2.5-coder:3b", timeout=120):
-    """Make AI call"""
-    print(f"[AI] Calling...")
+def ai_call(prompt, model="qwen2.5-coder:3b", timeout=120):
+    """Make AI call to Ollama"""
     try:
         r = requests.post(OLLAMA_URL, json={"model": model, "prompt": prompt, "stream": False}, timeout=timeout)
         if r.status_code == 200:
-            result = r.json().get("response", "").strip()
-            print(f"[AI] Got {len(result)} chars")
-            return result
+            return r.json().get("response", "").strip()
     except Exception as e:
-        print(f"[AI] Error: {e}")
+        print(f"[AI Error] {e}")
     return None
 
-
-# === FILE OPS ===
-def save_file(path, content):
-    """Save file"""
+def extract_json(text):
+    """Extract JSON from AI response"""
     try:
-        full = os.path.join(WORKSPACE, path)
-        os.makedirs(os.path.dirname(full), exist_ok=True)
-        open(full, "w", encoding="utf-8").write(content)
-        print(f"[SAVE] {path}")
-        return True
-    except Exception as e:
-        print(f"[SAVE ERROR] {e}")
-        return False
-
-
-def read_file(path):
-    """Read file"""
-    try:
-        full = os.path.join(WORKSPACE, path)
-        if os.path.exists(full):
-            return open(full, "r", encoding="utf-8").read()
-    except: pass
+        # Look for JSON block
+        match = re.search(r'```json\n(.*?)\n```', text, re.DOTALL)
+        if match:
+            return json.loads(match.group(1))
+        # Try raw JSON if no block
+        match = re.search(r'(\{.*\}|\[.*\])', text, re.DOTALL)
+        if match:
+            return json.loads(match.group(1))
+    except:
+        pass
     return None
 
+SYSTEM_PROMPT = """You are ARAS, a self-evolving AI Agent by SS Corporations.
+You are optimized for small local models and excel at complex reasoning.
 
-def list_files(path=""):
-    """List files"""
-    base = os.path.join(WORKSPACE, path)
-    if not os.path.exists(base):
-        return []
-    return [f for f in os.listdir(base)]
+Available Tools:
+- shell(command): Run terminal commands. Use for code execution, environment setup, and system exploration.
+- file_op(action, path, content=None): File manager. Actions: 'read', 'write', 'list', 'delete'. Use relative paths.
+- create_tool(name, code): Create a new Python tool to extend your capabilities.
+- self_optimize(target, new_content): Update your own system prompt or core logic. Target: 'system_prompt'.
 
+Response Format:
+Thought: Plan your next move.
+Action: {"tool": "tool_name", "parameters": {...}}
+Observation: (System output)
 
-def extract_code(text):
-    """Extract code from markdown"""
-    if "```" in text:
-        m = re.findall(r'```(?:\w+)?\n(.*?)```', text, re.DOTALL)
-        if m:
-            return m[0].strip()
+Final Answer: Clear, detailed solution.
+
+Principles:
+1. **Minimalist Reasoning**: For small models, be concise but logical.
+2. **Self-Correction**: If a tool fails, explain why and try a new way.
+3. **Autonomy**: Solve tasks completely. Install missing dependencies using `shell`.
+4. **Self-Evolution**: Use `create_tool` and `self_optimize` to improve your own efficiency.
+"""
+
+def agent_loop(user_msg, model, max_steps=10):
+    """The main ReAct loop for the agent"""
+    add_to_memory("user", user_msg)
+    context = get_memory_context()
     
-    if "<html" in text.lower():
-        start = text.find("<!DOCTYPE") 
-        if start == -1: start = text.find("<html")
-        end = text.rfind("</html>") + 7
-        if start >= 0 and end > 0:
-            return text[start:end]
+    # Dynamic context window for small models
+    if len(context) > 1500:
+        context = context[-1500:]
+        
+    current_prompt = f"{SYSTEM_PROMPT}\n\nContext:\n{context}\n\nUser: {user_msg}\n"
     
-    return text
-
-
-# === TRUE AI AGENT ===
-def agent(user_msg, model):
-    """True AI Agent - multi-step reasoning"""
-    msg = user_msg.lower().strip()
-    original = user_msg.strip()
-    
-    print(f"[AGENT] Input: {original[:50]}...")
-    memory.add_msg("user", original)
-    
-    # === FILE COMMANDS ===
-    if msg in ["list workspace", "ls", "files"]:
-        files = list_files()
-        memory.add_msg("assistant", f"Listed {len(files)} files")
-        return f"📁 Files:\n" + "\n".join([f"  {f}" for f in files]) if files else "  (empty)"
-    
-    if msg.startswith("read "):
-        path = original[5:].strip()
-        content = read_file(path)
-        if content:
-            memory.add_msg("assistant", f"Read {path}")
-            if len(content) > 2000:
-                content = content[:2000] + "\n...(truncated)"
-            return f"📄 {path}:\n\n{content}"
-        return f"❌ Not found: {path}"
-    
-    if msg.startswith("delete "):
-        path = original[7:].strip()
-        full = os.path.join(WORKSPACE, path)
-        try:
-            if os.path.isdir(full):
-                import shutil
-                shutil.rmtree(full)
-            elif os.path.exists(full):
-                os.remove(full)
-            memory.add_msg("assistant", f"Deleted {path}")
-            return f"✅ Deleted: {path}"
-        except:
-            return f"❌ Cannot delete: {path}"
-    
-    # === IMPROVE EXISTING PROJECT ===
-    if any(x in msg for x in ["improve", "update", "add more", "enhance", "more pages"]):
-        current = memory.short.get("current_project")
+    for step in range(max_steps):
+        print(f"[ARAS] Step {step+1}/{max_steps}")
         
-        if not current:
-            # Find most recent project
-            files = list_files()
-            for f in files:
-                if os.path.isdir(os.path.join(WORKSPACE, f)):
-                    current = f
-                    break
+        response = ai_call(current_prompt, model)
+        if not response:
+            return "Error: Could not reach AI model."
         
-        if not current:
-            return "❌ No project to improve. Create one first."
+        print(f"[AI] {response[:100]}...")
         
-        print(f"[AGENT] Improving: {current}")
+        if "Final Answer:" in response:
+            final_answer = response.split("Final Answer:")[1].strip()
+            add_to_memory("assistant", final_answer)
+            return final_answer
         
-        # STEP 1: Read all existing files
-        print("[STEP 1] Reading existing files...")
-        project_path = os.path.join(WORKSPACE, current)
-        existing = {}
-        
-        for root, dirs, files in os.walk(project_path):
-            for f in files:
-                path = os.path.join(root, f)
-                rel = os.path.relpath(path, WORKSPACE)
-                try:
-                    content = open(path, "r", encoding="utf-8").read()
-                    existing[rel] = content[:2000]
-                except: pass
-        
-        if not existing:
-            return "❌ Cannot read project files."
-        
-        # Show what we have
-        file_list = ", ".join(existing.keys())
-        print(f"[AGENT] Found files: {file_list}")
-        
-        # STEP 2: Analyze with AI what to improve
-        print("[STEP 2] AI analyzing...")
-        
-        analyze_prompt = f"""You are an expert web developer analyzing an existing project.
-
-Project: {current}
-Existing files: {file_list}
-
-First file content:
-{list(existing.values())[0][:1000]}
-
-User wants: {original}
-
-What improvements are needed? List 3-5 specific improvements as a numbered list."""
-        
-        improvements = ai(analyze_prompt, model, timeout=90)
-        
-        if not improvements:
-            return "❌ Cannot analyze. Is Ollama running?"
-        
-        print(f"[AGENT] Improvements:\n{improvements[:200]}...")
-        
-        # STEP 3: Generate improved files one by one
-        print("[STEP 3] Generating improved files...")
-        
-        for fname in existing:
-            print(f"[AI] Improving {fname}...")
-            
-            improve_prompt = f"""You are improving an existing file: {fname}
-
-Current content (first 1500 chars):
-{existing[fname][:1500]}
-
-User wants: {original}
-
-Improvements to make:
-{improvements}
-
-Generate the IMPROVED full content for this file.
-- Keep the same format (HTML, CSS, JS)
-- Make it better - more content, better styling, more features
-- Return ONLY the complete code, no explanation
-
-File: {fname}"""
-            
-            new_content = ai(improve_prompt, model, timeout=180)
-            
-            if new_content:
-                # Extract code
-                code = extract_code(new_content)
+        # Try to extract action
+        action_match = re.search(r'Action:\s*(\{.*\})', response, re.DOTALL)
+        if action_match:
+            try:
+                action_data = json.loads(action_match.group(1))
+                tool_name = action_data.get("tool")
+                params = action_data.get("parameters", {})
                 
-                # Verify it's not empty
-                if len(code) > 100:
-                    if save_file(fname, code):
-                        print(f"[OK] Updated {fname}")
-                else:
-                    print(f"[WARN] Content too short for {fname}")
-        
-        memory.add_msg("assistant", f"Improved {current}")
-        memory.remember(f"project_{current}", "improved")
-        
-        return f"✅ Improved {current}!\n\nImprovements made:\n{improvements[:300]}...\n\n📂 {WORKSPACE}\\{current}\\"
-    
-    # === CREATE NEW PROJECT ===
-    if any(x in msg for x in ["make", "create", "build", "generate", "write"]):
-        print("[AGENT] Creating new project...")
-        
-        # Determine type
-        ptype = "website"
-        if "python" in msg or "script" in msg:
-            ptype = "python"
-        elif "discord" in msg:
-            ptype = "discord"
-        
-        # Extract topic
-        topic = original
-        for prep in ["about ", "on ", "for ", "named "]:
-            if prep in msg:
-                topic = msg.split(prep)[1].strip("?.!").strip()
-                break
-        
-        if "parks" in msg:
-            topic = "Parks and Nature"
-        
-        # Project name
-        pname = "".join(c for c in topic.lower().replace(" ", "_")[:20] if c.isalnum() or c == "_")
-        memory.set_project(pname)
-        
-        print(f"[AGENT] Creating {ptype}: {pname} ({topic})")
-        
-        if ptype == "website":
-            # STEP 1: Plan the website
-            print("[STEP 1] Planning website structure...")
-            
-            plan_prompt = f"""Plan a complete website about {topic}.
-Return a list of pages needed as:
-PAGES: home.html,about.html,services.html,contact.html
-
-Or for simple sites:
-PAGES: index.html,style.css"""
-            
-            plan = ai(plan_prompt, model, timeout=60)
-            
-            pages = ["index.html"]
-            if plan and "PAGES:" in plan:
-                pages = [p.strip() for p in plan.split("PAGES:")[1].split(",")]
-            
-            print(f"[AGENT] Will create: {pages}")
-            
-            # STEP 2: Generate each file with AI
-            for page in pages:
-                print(f"[AI] Generating {page}...")
-                
-                page_prompt = f"""Create a complete, professional {page} for a website about {topic}.
-
-Requirements:
-- Professional HTML5 structure
-- Real content about {topic} (NOT lorem ipsum)
-- Internal CSS for styling
-- Navigation to other pages
-- Modern, clean design
-
-Pages to link: {", ".join(pages)}
-
-Return ONLY the complete HTML code."""
-                
-                content = ai(page_prompt, model, timeout=180)
-                
-                if content:
-                    code = extract_code(content)
+                if tool_name in TOOLS:
+                    print(f"[TOOL] Executing {tool_name} with {params}")
+                    observation = TOOLS[tool_name].execute(**params)
+                    obs_str = json.dumps(observation) if isinstance(observation, (dict, list)) else str(observation)
                     
-                    if len(code) > 200:
-                        save_file(f"{pname}/{page}", code)
-                        print(f"[OK] Created {page}")
-                    else:
-                        # Fallback simple page
-                        simple = f"""<!DOCTYPE html>
-<html><head><title>{topic}</title></head>
-<body><h1>{topic}</h1><p>Content about {topic}.</p></body></html>"""
-                        save_file(f"{pname}/{page}", simple)
-                        print(f"[OK] Created {page} (fallback)")
-            
-            # STEP 3: Generate CSS if needed
-            if any(p.endswith(".html") for p in pages):
-                print("[AI] Generating style.css...")
-                
-                css_prompt = f"""Create a complete CSS file for a {topic} website.
+                    # Truncate long observations
+                    if len(obs_str) > 2000:
+                        obs_str = obs_str[:2000] + "...(truncated)"
+                    
+                    print(f"[OBS] Got {len(obs_str)} chars")
+                    current_prompt += f"\n{response}\nObservation: {obs_str}\n"
+                    continue
+                else:
+                    current_prompt += f"\n{response}\nObservation: Error: Tool {tool_name} not found.\n"
+            except Exception as e:
+                current_prompt += f"\n{response}\nObservation: Error parsing action: {str(e)}\n"
+        else:
+            # If no action and no final answer, try to nudge the AI
+            current_prompt += f"\n{response}\nObservation: Please provide an Action or a Final Answer.\n"
 
-Return ONLY CSS code with:
-- Modern responsive design
-- Navigation styling
-- Hero section
-- Content sections
-- Footer
-- Hover effects
-- Mobile-friendly
+    return "I reached the maximum number of steps without finding a final answer. Please try to be more specific."
 
-No explanations, just CSS."""
-                
-                css = ai(css_prompt, model, timeout=120)
-                
-                if css and "{" in css:
-                    save_file(f"{pname}/style.css", css)
-                    print("[OK] Created style.css")
-            
-            memory.add_msg("assistant", f"Created {pname}")
-            memory.remember(f"project_{pname}", topic)
-            
-            return f"✅ Created {ptype}: {topic}\n📂 {WORKSPACE}\\{pname}\\"
-        
-        elif ptype == "python":
-            code_prompt = f"""Write a complete, working Python script for: {topic}
-
-Requirements:
-- Proper imports
-- Functions with docstrings
-- Error handling
-- Main execution
-- Comments
-
-Return ONLY Python code."""
-            
-            code = ai(code_prompt, model, timeout=180)
-            
-            if code:
-                code = extract_code(code)
-                save_file(f"{pname}/{pname}.py", code)
-                memory.add_msg("assistant", f"Created {pname}")
-                
-                return f"✅ Created Python script: {topic}\n📂 {WORKSPACE}\\{pname}\\{pname}.py"
-        
-        return "❌ Creation failed. Try again."
+def chat(msg, model="qwen2.5-coder:3b"):
+    """Compatibility wrapper for the agent loop"""
+    # Simple check for direct commands to bypass the loop if needed
+    msg_lower = msg.lower().strip()
     
-    # === GENERAL CHAT ===
-    print("[AGENT] Chat mode...")
-    
-    ctx = memory.get_context()
-    prefs = {k: v["value"] for k, v in memory.long.items() if "value" in v}
-    
-    chat_prompt = f"""You are ARAS, an AI Agent by SS Corporations.
+    # Example of a fast path for simple queries
+    if msg_lower in ["ls", "list workspace", "files"]:
+        files = os.listdir(WORKSPACE)
+        return f"📁 Workspace Files:\n" + "\n".join([f"- {f}" for f in files]) if files else "Workspace is empty."
 
-Conversation:
-{ctx}
-
-User: {original}
-
-Remember: You are ARAS. If asked to create something, use the create command.
-{json.dumps(prefs) if prefs else ""}
-
-ARAS:"""
-    
-    response = ai(chat_prompt, model, timeout=90)
-    
-    if response:
-        response = response.replace("Qwen", "ARAS").replace("Alibaba", "SS Corporations")
-        memory.add_msg("assistant", response)
-        return response
-    
-    return "Connection error. Try again."
-
-
-def chat(msg, model):
-    return agent(msg, model)
+    return agent_loop(msg, model)

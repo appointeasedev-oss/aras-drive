@@ -1,100 +1,54 @@
-# ARAS-Drive 🐦
-
-Portable AI Agent Setup for USB/Local Machines
+# ARAS-Drive 🐦 (Enhanced Edition)
 
 ## What is ARAS-Drive?
 
-A clean, reversible setup system to run a Telegram bot connected to Ollama (local AI). Everything installs user-level (no admin required) and tracks what was added for clean removal.
+ARAS-Drive is a portable, high-performance AI agent system designed to run locally on small models (3B-7B) while delivering capabilities that rival much larger systems. It is now powered by an advanced **ReAct (Reasoning + Acting) loop**, allowing it to think, plan, execute tools, and self-correct.
 
-## Files
+## 🚀 Key Enhancements
 
-| File | Purpose |
-|------|---------|
-| `setup.bat` | Install Python, Ollama, and required packages |
-| `start.bat` | Start Ollama + Telegram bot |
-| `clean.bat` | Remove only what setup.bat installed |
-| `requirements.txt` | Python dependencies |
-| `agent/telegram_agent.py` | Telegram bot that connects to Ollama |
+- **ReAct Reasoning Loop**: Instead of simple chat, ARAS now follows a multi-step reasoning process.
+- **Dynamic Tool System**:
+  - `shell`: Full system command execution for running code and managing environments.
+  - `file_op`: Advanced file manipulation (read, write, list, delete).
+  - `create_tool`: The agent can now **extend its own capabilities** by writing new Python tools.
+- **Optimized for Small Models**: Specifically tuned prompts for `qwen2.5-coder:3b` and similar local models.
+- **Self-Correction**: ARAS analyzes errors from its tools and automatically tries alternative solutions.
+- **Persistent Memory**: Integrated short-term conversation context and long-term SQLite memory.
 
-## Quick Start
+## 📁 Repository Structure
 
-### 1. Run Setup
-```
-Double-click setup.bat
-```
+| Directory | Purpose |
+|-----------|---------|
+| `agent/` | Core agent logic and ReAct implementation |
+| `agent/tools/` | Modular tool definitions |
+| `memory/` | Persistent SQLite and JSON memory storage |
+| `workspace/` | The agent's active working area |
 
-This will:
-- Check for Python (prompt to install if missing)
-- Install Ollama if not present
-- Install required Python packages
+## 🛠️ Getting Started
 
-### 2. Get Telegram Credentials
+### 1. Prerequisites
+- [Ollama](https://ollama.com/) installed and running.
+- Recommended model: `ollama pull qwen2.5-coder:3b` (or `7b`).
 
-1. **Bot Token**: Message @BotFather on Telegram → `/newbot` → Follow prompts
-2. **User ID**: Message @userinfobot on Telegram → Get your ID
-
-### 3. Start ARAS
-```
-Double-click start.bat
-```
-
-Enter your Bot Token and User ID when prompted.
-
-### 4. Chat!
-
-Open Telegram and message your bot. It will respond using Ollama's AI.
-
-## Cleanup
-
-To remove everything ARAS-Drive installed:
-```
-Double-click clean.bat
+### 2. Run Locally
+```bash
+python agent/local_chat.py
 ```
 
-This reads `install_log.txt` and removes only what was added.
-
-## Configuration
-
-### Change Ollama Model
-
-Edit `agent/telegram_agent.py` and change:
-```python
-DEFAULT_MODEL = "llama3.2"
+### 3. Run via Telegram
+Configure your `TOKEN` and `USER_ID` in `start.bat` or run:
+```bash
+python agent/telegram_agent.py <TOKEN> <USER_ID> <MODEL_NAME>
 ```
 
-To another model like `mistral`, `codellama`, etc.
+## 🧠 How to use the Agent
 
-### OpenClaw Integration
+ARAS is now a true autonomous agent. You can give it complex tasks like:
+- "Create a web scraper for news and save the results to a CSV."
+- "Analyze the files in my workspace and suggest improvements."
+- "Write a python script, test it, and if it fails, fix the bugs."
 
-The `start.bat` includes full path to OpenClaw:
-```
-C:\Users\satvi\AppData\Roaming\npm\node_modules\openclaw\openclaw.mjs
-```
+ARAS will **Think**, take an **Action**, observe the **Result**, and iterate until the task is complete.
 
-Modify this in `start.bat` if your OpenClaw is installed elsewhere.
-
-## Troubleshooting
-
-### "Python not found"
-Install Python from https://www.python.org/downloads/
-- Check "Add Python to PATH"
-- Choose "Install for current user only"
-
-### "Cannot connect to Ollama"
-Make sure Ollama is running:
-```cmd
-ollama serve
-```
-
-### "python-telegram-bot not installed"
-Run `setup.bat` again to install dependencies.
-
-## Requirements
-
-- Windows 10/11
-- Internet connection (for downloading installers)
-- Telegram account
-
-## License
-
-MIT
+---
+*Developed by SS Corporations - Making local AI smarter.*
