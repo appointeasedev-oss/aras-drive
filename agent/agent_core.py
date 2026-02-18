@@ -41,14 +41,24 @@ TOOLS = {
     "self_optimize": optimizer_tool
 }
 
-def ai_call(prompt, model="qwen2.5-coder:3b", timeout=120):
-    """Make AI call to Ollama"""
-    try:
-        r = requests.post(OLLAMA_URL, json={"model": model, "prompt": prompt, "stream": False}, timeout=timeout)
-        if r.status_code == 200:
-            return r.json().get("response", "").strip()
-    except Exception as e:
-        print(f"[AI Error] {e}")
+def ai_call(prompt, model="qwen2.5-coder:3b", timeout=300, retries=3):
+    """Make AI call to Ollama with retries and increased timeout"""
+    for attempt in range(retries):
+        try:
+            print(f"[AI] Calling Ollama (Attempt {attempt + 1}/{retries})...")
+            r = requests.post(OLLAMA_URL, json={"model": model, "prompt": prompt, "stream": False}, timeout=timeout)
+            if r.status_code == 200:
+                return r.json().get("response", "").strip()
+            else:
+                print(f"[AI Error] Status {r.status_code}: {r.text}")
+        except requests.exceptions.Timeout:
+            print(f"[AI Error] Timeout on attempt {attempt + 1}. Retrying...")
+        except Exception as e:
+            print(f"[AI Error] {e}")
+        
+        if attempt < retries - 1:
+            time.sleep(2)  # Wait before retrying
+            
     return None
 
 def extract_json(text):
@@ -105,7 +115,7 @@ def agent_loop(user_msg, model, max_steps=10):
         
         response = ai_call(current_prompt, model)
         if not response:
-            return "Error: Could not reach AI model."
+            return "❌ Error: Could not reach local AI model (Ollama). Please ensure Ollama is running (`ollama serve`) and the model is pulled."
         
         print(f"[AI] {response[:100]}...")
         
