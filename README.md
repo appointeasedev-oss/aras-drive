@@ -6,8 +6,9 @@ ARAS-Drive is a portable, high-performance AI agent system designed to run local
 
 ## 🚀 Key Enhancements
 
-- **Multi-Agent Orchestration**: Complex tasks are automatically decomposed into small steps executed by specialized sub-agents (Explorer, Coder, Reviewer).
-- **8GB RAM Optimization**: Uses chunked file reading and grep-based searching to handle massive codebases without memory pressure.
+- **Dynamic Multi-Agent Orchestration**: Complex tasks are decomposed into steps, and the main agent can dynamically spawn specialized sub-agents (`spawn_sub_agent`) for deep execution.
+- **MiniMax OAuth Support**: Integrated support for external MiniMax models via OAuth, providing a high-performance alternative to local models.
+- **8GB RAM Optimization**: Uses chunked file reading and grep-based searching (`codebase_manage`) to handle massive codebases without memory pressure.
 - **Dynamic Tool System**:
   - `codebase_manage`: Specialized tool for searching and reading large projects in chunks.
   - `shell`: Full system command execution.

@@ -18,6 +18,7 @@ try:
     from .agents.orchestrator import Orchestrator
     from .agents.specialists import get_explorer_agent, get_coder_agent, get_reviewer_agent
     from .memory import add_to_memory, get_memory_context, remember_fact, recall_fact
+    from .minimax_auth import MiniMaxClient
 except ImportError:
     from tools.base import ShellTool, FileTool
     from tools.developer import ToolCreator
@@ -26,6 +27,7 @@ except ImportError:
     from agents.orchestrator import Orchestrator
     from agents.specialists import get_explorer_agent, get_coder_agent, get_reviewer_agent
     from memory import add_to_memory, get_memory_context, remember_fact, recall_fact
+    from minimax_auth import MiniMaxClient
 
 # Config
 AGENT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -42,16 +44,30 @@ tool_creator = ToolCreator(os.path.join(AGENT_DIR, "agent", "tools"))
 optimizer_tool = OptimizerTool(__file__)
 codebase_tool = CodebaseManager(WORKSPACE)
 
+def spawn_sub_agent(name, task, role_description):
+    """Dynamically spawns and executes a sub-agent task"""
+    print(f"[ARAS] Spawning Sub-Agent: {name} for task: {task}")
+    # This leverages the existing agent_loop with a specialized prompt
+    specialist_prompt = f"You are {name}, a specialized sub-agent. {role_description}"
+    # We use the same model as the main agent for consistency
+    return agent_loop(task, model=DEFAULT_MODEL, max_steps=5, system_override=specialist_prompt)
+
 TOOLS = {
     "shell": shell_tool,
     "file_op": file_tool,
     "create_tool": tool_creator,
     "self_optimize": optimizer_tool,
-    "codebase_manage": codebase_tool
+    "codebase_manage": codebase_tool,
+    "spawn_sub_agent": spawn_sub_agent
 }
 
 def ai_call(prompt, model=DEFAULT_MODEL, timeout=300, retries=3):
-    """Robust AI call optimized for small local models"""
+    """Robust AI call supporting both Ollama and MiniMax"""
+    if model.startswith("minimax/"):
+        real_model = model.split("/")[1]
+        client = MiniMaxClient()
+        return client.call(prompt, model=real_model)
+        
     for attempt in range(retries):
         try:
             r = requests.post(OLLAMA_URL, json={"model": model, "prompt": prompt, "stream": False}, timeout=timeout)
@@ -71,6 +87,7 @@ Tools:
 - codebase_manage(action, query, chunk_index): Large codebase handling.
 - create_tool(name, code): Extend capabilities.
 - self_optimize(target, new_content): Self-improvement.
+- spawn_sub_agent(name, task, role_description): Dynamically create a specialized sub-agent for a specific task.
 
 Format:
 Thought: Reason.
@@ -79,8 +96,10 @@ Observation: Result.
 Final Answer: Final result.
 """
 
-def agent_loop(user_msg, model=DEFAULT_MODEL, max_steps=10):
+def agent_loop(user_msg, model=DEFAULT_MODEL, max_steps=10, system_override=None):
     """Orchestrated ReAct loop"""
+    active_system_prompt = system_override if system_override else SYSTEM_PROMPT
+    
     add_to_memory("user", user_msg)
     context = get_memory_context()
     
@@ -107,7 +126,7 @@ def agent_loop(user_msg, model=DEFAULT_MODEL, max_steps=10):
         else:
             agent_type = "General"
             
-        current_prompt = f"{SYSTEM_PROMPT}\nRole: {agent_type}\nTask: {task}\nContext: {context[-1000:]}\n"
+        current_prompt = f"{active_system_prompt}\nRole: {agent_type}\nTask: {task}\nContext: {context[-1000:]}\n"
         
         # Sub-loop for the specific step
         for s in range(5):

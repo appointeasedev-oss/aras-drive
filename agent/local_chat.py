@@ -42,11 +42,13 @@ except Exception as e:
     sys.exit(1)
 
 # Get model
-model = "qwen2.5-coder:3b"
+model = "gemma2:4b" # Default optimized model
 if len(sys.argv) > 1:
     model = sys.argv[1]
 
 print(f"    Model: {model}")
+if model.startswith("minimax"):
+    print("    [Tip] Ensure MINIMAX_API_KEY is set or follow the OAuth flow.")
 print()
 print("Commands:")
 print("  quit / exit - Stop")
