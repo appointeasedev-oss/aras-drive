@@ -6,14 +6,16 @@ ARAS-Drive is a portable, high-performance AI agent system designed to run local
 
 ## 🚀 Key Enhancements
 
-- **ReAct Reasoning Loop**: Instead of simple chat, ARAS now follows a multi-step reasoning process.
+- **Multi-Agent Orchestration**: Complex tasks are automatically decomposed into small steps executed by specialized sub-agents (Explorer, Coder, Reviewer).
+- **8GB RAM Optimization**: Uses chunked file reading and grep-based searching to handle massive codebases without memory pressure.
 - **Dynamic Tool System**:
-  - `shell`: Full system command execution for running code and managing environments.
-  - `file_op`: Advanced file manipulation (read, write, list, delete).
-  - `create_tool`: The agent can now **extend its own capabilities** by writing new Python tools.
-- **Optimized for Small Models**: Specifically tuned prompts for `qwen2.5-coder:3b` and similar local models.
-- **Self-Correction**: ARAS analyzes errors from its tools and automatically tries alternative solutions.
-- **Persistent Memory**: Integrated short-term conversation context and long-term SQLite memory.
+  - `codebase_manage`: Specialized tool for searching and reading large projects in chunks.
+  - `shell`: Full system command execution.
+  - `file_op`: Advanced file manipulation.
+  - `create_tool`: Self-extension capability to write new Python tools.
+  - `self_optimize`: Autonomous self-improvement of internal prompts and logic.
+- **Optimized for Gemma 2 4B**: Specifically tuned for ultra-small local models, ensuring high intelligence with low power.
+- **Self-Evolution**: ARAS can reflect on its performance and autonomously optimize its own core logic.
 
 ## 📁 Repository Structure
 
